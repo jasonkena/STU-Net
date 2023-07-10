@@ -3,6 +3,7 @@ from nnunet.utilities.nd_softmax import softmax_helper
 from batchgenerators.utilities.file_and_folder_operations import *
 
 from nnunet.training.network_training.nnUNetTrainerV2 import nnUNetTrainerV2
+from nnunet.training.network_training.heart import remap_output, remap_target, remap_loss
 from nnunet.network_architecture.STUNet import STUNet
 from torchinfo import summary
 
@@ -85,6 +86,29 @@ class STUNetTrainer_small_ft(STUNetTrainer_small):
         super().__init__(plans_file, fold, output_folder, dataset_directory, batch_dice, stage, unpack_data,
                          deterministic, fp16)
         self.initial_lr = 1e-3
+
+class HeartTrainer(STUNetTrainer_small_ft):
+    def __init__(self, plans_file, fold, output_folder=None, dataset_directory=None, batch_dice=True, stage=None,
+                 unpack_data=True, deterministic=True, fp16=False, labels=None, zero_could_be=None, used_labels=None):
+
+        super().__init__(plans_file, fold, output_folder, dataset_directory, batch_dice, stage, unpack_data,
+                         deterministic, fp16)
+
+        self.labels = labels
+        self.zero_could_be = zero_could_be
+        self.used_labels = used_labels
+
+        self.loss = remap_loss(self.loss, labels, zero_could_be, used_labels)
+
+    def run_online_evaluation(self, output, target):
+        # defined in nnUNetTrainerV2
+        # output shape: [torch.Size([2, 11, 128, 128, 128]), torch.Size([2, 11, 64, 64, 64]), torch.Size([2, 11, 32, 32, 32]), torch.Size([2, 11, 16, 16, 16]), torch.Size([2, 11, 8, 8, 8])]
+        # target shape: [torch.Size([2, 1, 128, 128, 128]), torch.Size([2, 1, 64, 64, 64]), torch.Size([2, 1, 32, 32, 32]), torch.Size([2, 1, 16, 16, 16]), torch.Size([2, 1, 8, 8, 8])]
+        # evaluation does not depend on self.loss, it calculates dice loss
+        output = [remap_output(o, self.labels, self.zero_could_be, self.used_labels) for o in output]
+        target = [remap_target(t, self.used_labels) for t in target]
+
+        return super().run_online_evaluation(output, target)
 
 class STUNetTrainer_base_ft(STUNetTrainer_base):
     def __init__(self, plans_file, fold, output_folder=None, dataset_directory=None, batch_dice=True, stage=None,

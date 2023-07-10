@@ -1,3 +1,6 @@
+import os
+import json
+import pickle
 import argparse
 import torch
 from batchgenerators.utilities.file_and_folder_operations import *
@@ -144,6 +147,7 @@ def main():
                         help='path to nnU-Net checkpoint file to be used as pretrained model (use .model '
                              'file, for example model_final_checkpoint.model). Will only be used when actually training. '
                              'Optional. Beta. Use with caution.')
+    parser.add_argument('--dataset_json', type=str, required=True, help='used for hotpatching')
 
     args = parser.parse_args()
 
@@ -191,6 +195,25 @@ def main():
     plans_file, output_folder_name, dataset_directory, batch_dice, stage, \
     trainer_class = get_default_configuration(network, task, network_trainer, plans_identifier)
 
+    print("hot patching plans_file")
+    with open(plans_file, "rb") as f:
+        plans = pickle.load(f)
+    dataset_json = json.load(open(args.dataset_json))
+
+    labels = dataset_json["labels"]
+    zero_could_be = dataset_json["zero_could_be"]
+    used_labels = dataset_json["used_labels"]
+    for k, v in labels.items():
+        if "/" in v:
+            plans["num_classes"] -= 1
+            plans["all_classes"].remove(int(k))
+            print(f"removed class {k} from plans because it is a hierarchical class")
+    new_plans_file = join(os.path.dirname(plans_file), "new_" + os.path.basename(plans_file))
+    with open(new_plans_file, "wb") as f:
+        pickle.dump(plans, f)
+    print("using new plans file:", new_plans_file)
+    plans_file = new_plans_file
+
     if trainer_class is None:
         raise RuntimeError("Could not find trainer class in nnunet.training.network_training")
 
@@ -206,7 +229,7 @@ def main():
     trainer = trainer_class(plans_file, fold, output_folder=output_folder_name, dataset_directory=dataset_directory,
                             batch_dice=batch_dice, stage=stage, unpack_data=decompress_data,
                             deterministic=deterministic,
-                            fp16=run_mixed_precision)
+                            fp16=run_mixed_precision, labels = labels, zero_could_be = zero_could_be, used_labels=used_labels)
     if args.disable_saving:
         trainer.save_final_checkpoint = False # whether or not to save the final checkpoint
         trainer.save_best_checkpoint = False  # whether or not to save the best checkpoint according to
